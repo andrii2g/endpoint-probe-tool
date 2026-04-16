@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.CommandLine;
 
 namespace A2G.EndpointProbe.Tool.Cli;
 
@@ -22,149 +23,153 @@ Options:
 
     public static CliParseResult Parse(string[] args)
     {
-        if (args.Length == 0)
+        if (args.Length == 0 || args.Any(IsHelpToken))
         {
             return CliParseResult.Help();
         }
 
-        Uri? url = null;
-        var attempts = 1;
-        var method = HttpMethod.Get;
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string? body = null;
-        var json = false;
-        string? output = null;
-        var timeout = TimeSpan.FromSeconds(15);
-        var insecure = false;
-
-        for (var index = 0; index < args.Length; index++)
+        var definition = CreateDefinition();
+        var parseResult = definition.RootCommand.Parse(args);
+        if (parseResult.Errors.Count > 0)
         {
-            var current = args[index];
-            switch (current)
-            {
-                case "-h":
-                case "--help":
-                    return CliParseResult.Help();
-                case "-u":
-                case "--url":
-                    if (!TryReadValue(args, ref index, out var explicitUrl))
-                    {
-                        return CliParseResult.Failure("Missing value for --url.");
-                    }
-
-                    if (!TryParseUrl(explicitUrl, out url))
-                    {
-                        return CliParseResult.Failure($"Invalid URL: {explicitUrl}");
-                    }
-
-                    break;
-                case "-a":
-                case "--attempts":
-                    if (!TryReadValue(args, ref index, out var attemptsValue) || !int.TryParse(attemptsValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out attempts) || attempts <= 0)
-                    {
-                        return CliParseResult.Failure("--attempts must be a positive integer.");
-                    }
-
-                    break;
-                case "-m":
-                case "--method":
-                    if (!TryReadValue(args, ref index, out var methodValue))
-                    {
-                        return CliParseResult.Failure("Missing value for --method.");
-                    }
-
-                    method = new HttpMethod(methodValue.ToUpperInvariant());
-                    break;
-                case "--headers":
-                    if (!TryReadValue(args, ref index, out var headerValue))
-                    {
-                        return CliParseResult.Failure("Missing value for --headers.");
-                    }
-
-                    foreach (var header in headerValue.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                    {
-                        var separatorIndex = header.IndexOf(':');
-                        if (separatorIndex <= 0)
-                        {
-                            return CliParseResult.Failure($"Invalid header format: {header}");
-                        }
-
-                        var name = header[..separatorIndex].Trim();
-                        var value = header[(separatorIndex + 1)..].Trim();
-                        headers[name] = value;
-                    }
-
-                    break;
-                case "--body":
-                    if (!TryReadValue(args, ref index, out body))
-                    {
-                        return CliParseResult.Failure("Missing value for --body.");
-                    }
-
-                    break;
-                case "--json":
-                    json = true;
-                    break;
-                case "--output":
-                    if (!TryReadValue(args, ref index, out output))
-                    {
-                        return CliParseResult.Failure("Missing value for --output.");
-                    }
-
-                    break;
-                case "--timeout":
-                    if (!TryReadValue(args, ref index, out var timeoutValue) || !TryParseTimeout(timeoutValue, out timeout))
-                    {
-                        return CliParseResult.Failure("--timeout must be a positive number of seconds or a time span.");
-                    }
-
-                    break;
-                case "--insecure":
-                    insecure = true;
-                    break;
-                default:
-                    if (current.StartsWith("-", StringComparison.Ordinal))
-                    {
-                        return CliParseResult.Failure($"Unknown option: {current}");
-                    }
-
-                    if (url is not null)
-                    {
-                        return CliParseResult.Failure("Only one URL can be specified.");
-                    }
-
-                    if (!TryParseUrl(current, out url))
-                    {
-                        return CliParseResult.Failure($"Invalid URL: {current}");
-                    }
-
-                    break;
-            }
+            return CliParseResult.Failure(parseResult.Errors[0].Message);
         }
 
-        if (url is null)
+        var positionalUrl = parseResult.GetValue(definition.UrlArgument);
+        var optionUrl = parseResult.GetValue(definition.UrlOption);
+        if (!string.IsNullOrWhiteSpace(positionalUrl) && !string.IsNullOrWhiteSpace(optionUrl))
+        {
+            return CliParseResult.Failure("Specify the URL either positionally or with --url, not both.");
+        }
+
+        var rawUrl = optionUrl ?? positionalUrl;
+        if (string.IsNullOrWhiteSpace(rawUrl))
         {
             return CliParseResult.Failure("A URL is required.");
         }
 
+        if (!TryParseUrl(rawUrl, out var url))
+        {
+            return CliParseResult.Failure($"Invalid URL: {rawUrl}");
+        }
+
+        var attempts = parseResult.GetValue(definition.AttemptsOption) ?? 1;
+        if (attempts <= 0)
+        {
+            return CliParseResult.Failure("--attempts must be a positive integer.");
+        }
+
+        var methodName = parseResult.GetValue(definition.MethodOption) ?? "GET";
+        var method = new HttpMethod(methodName.ToUpperInvariant());
+
+        var timeoutText = parseResult.GetValue(definition.TimeoutOption);
+        var timeout = TimeSpan.FromSeconds(15);
+        if (timeoutText is not null && !TryParseTimeout(timeoutText, out timeout))
+        {
+            return CliParseResult.Failure("--timeout must be a positive number of seconds or a time span.");
+        }
+
+        if (!TryParseHeaders(parseResult.GetValue(definition.HeadersOption) ?? [], out var headers, out var headerError))
+        {
+            return CliParseResult.Failure(headerError!);
+        }
+
+        var body = parseResult.GetValue(definition.BodyOption);
         if (body is not null && method == HttpMethod.Get)
         {
             method = HttpMethod.Post;
         }
 
-        return CliParseResult.Success(new CliOptions(url, attempts, method, headers, body, json, output, timeout, insecure, false));
+        return CliParseResult.Success(new CliOptions(
+            url!,
+            attempts,
+            method,
+            headers,
+            body,
+            parseResult.GetValue(definition.JsonOption),
+            parseResult.GetValue(definition.OutputOption),
+            timeout,
+            parseResult.GetValue(definition.InsecureOption),
+            Help: false));
     }
 
-    private static bool TryReadValue(string[] args, ref int index, out string value)
+    private static CommandDefinition CreateDefinition()
     {
-        if (index + 1 < args.Length)
+        var urlArgument = new Argument<string?>("url")
         {
-            value = args[++index];
-            return true;
+            Arity = ArgumentArity.ZeroOrOne,
+            Description = "Endpoint URL to probe."
+        };
+
+        var urlOption = new Option<string?>("--url", ["-u"])
+        {
+            Description = "Endpoint URL to probe."
+        };
+
+        var attemptsOption = new Option<int?>("--attempts", ["-a"])
+        {
+            Description = "Number of top-level HTTP attempts."
+        };
+
+        var methodOption = new Option<string?>("--method", ["-m"])
+        {
+            Description = "HTTP method."
+        };
+
+        var headersOption = new Option<string[]>("--headers")
+        {
+            Description = "Header in 'Name: Value' form. Repeat or use ';' separators.",
+            AllowMultipleArgumentsPerToken = true
+        };
+
+        var bodyOption = new Option<string?>("--body") { Description = "Request body for methods such as POST." };
+        var jsonOption = new Option<bool>("--json") { Description = "Emit JSON to stdout." };
+        var outputOption = new Option<string?>("--output") { Description = "Write the rendered output to a file." };
+        var timeoutOption = new Option<string?>("--timeout") { Description = "Total probe timeout in seconds or hh:mm:ss." };
+        var insecureOption = new Option<bool>("--insecure") { Description = "Skip TLS certificate validation." };
+
+        var rootCommand = new RootCommand("Probe HTTP and HTTPS endpoints for DNS, TLS, timeout, retry, and response consistency issues.");
+        rootCommand.Add(urlArgument);
+        rootCommand.Add(urlOption);
+        rootCommand.Add(attemptsOption);
+        rootCommand.Add(methodOption);
+        rootCommand.Add(headersOption);
+        rootCommand.Add(bodyOption);
+        rootCommand.Add(jsonOption);
+        rootCommand.Add(outputOption);
+        rootCommand.Add(timeoutOption);
+        rootCommand.Add(insecureOption);
+
+        return new CommandDefinition(rootCommand, urlArgument, urlOption, attemptsOption, methodOption, headersOption, bodyOption, jsonOption, outputOption, timeoutOption, insecureOption);
+    }
+
+    private static bool IsHelpToken(string arg)
+        => string.Equals(arg, "-h", StringComparison.Ordinal) || string.Equals(arg, "--help", StringComparison.Ordinal);
+
+    private static bool TryParseHeaders(IEnumerable<string> rawHeaders, out IReadOnlyDictionary<string, string> headers, out string? error)
+    {
+        var parsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawHeaderGroup in rawHeaders)
+        {
+            foreach (var header in rawHeaderGroup.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var separatorIndex = header.IndexOf(':');
+                if (separatorIndex <= 0)
+                {
+                    headers = parsed;
+                    error = $"Invalid header format: {header}";
+                    return false;
+                }
+
+                var name = header[..separatorIndex].Trim();
+                var value = header[(separatorIndex + 1)..].Trim();
+                parsed[name] = value;
+            }
         }
 
-        value = string.Empty;
-        return false;
+        headers = parsed;
+        error = null;
+        return true;
     }
 
     private static bool TryParseUrl(string value, out Uri? url)
@@ -195,5 +200,17 @@ Options:
         timeout = default;
         return false;
     }
-}
 
+    private sealed record CommandDefinition(
+        RootCommand RootCommand,
+        Argument<string?> UrlArgument,
+        Option<string?> UrlOption,
+        Option<int?> AttemptsOption,
+        Option<string?> MethodOption,
+        Option<string[]> HeadersOption,
+        Option<string?> BodyOption,
+        Option<bool> JsonOption,
+        Option<string?> OutputOption,
+        Option<string?> TimeoutOption,
+        Option<bool> InsecureOption);
+}

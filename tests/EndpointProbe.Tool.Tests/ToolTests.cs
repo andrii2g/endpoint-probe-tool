@@ -5,7 +5,7 @@ using A2G.EndpointProbe.Tool.Output;
 using A2G.EndpointProbe.Tool.Services;
 using Xunit;
 
-namespace A2G.A2G.EndpointProbe.Tool.Tests;
+namespace A2G.EndpointProbe.Tool.Tests;
 
 public sealed class CliParserTests
 {
@@ -42,6 +42,15 @@ public sealed class CliParserTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal("Invalid header format: broken", result.Error);
+    }
+
+    [Fact]
+    public void Rejects_DuplicateUrlSources()
+    {
+        var result = CliParser.Parse(["https://example.com", "--url", "https://contoso.com"]);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("Specify the URL either positionally or with --url, not both.", result.Error);
     }
 }
 
@@ -81,12 +90,29 @@ public sealed class ResultRendererTests
     [Fact]
     public void Package_Project_IsConfigured_AsDotnetTool()
     {
-        var projectPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "A2G.EndpointProbe.Tool", "A2G.EndpointProbe.Tool.csproj"));
+        var projectPath = FindProjectFile();
         var document = XDocument.Load(projectPath);
 
         Assert.Equal("true", document.Descendants("PackAsTool").Single().Value);
         Assert.Equal("endpoint-probe", document.Descendants("ToolCommandName").Single().Value);
-        Assert.Equal("A2G.EndpointProbe.Tool", document.Descendants("PackageId").Single().Value);
+        Assert.Equal("EndpointProbe.Tool", document.Descendants("PackageId").Single().Value);
+    }
+
+    private static string FindProjectFile()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "src", "EndpointProbe.Tool", "EndpointProbe.Tool.csproj");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate src/EndpointProbe.Tool/EndpointProbe.Tool.csproj from the test output directory.");
     }
 
     private static ProbeResult CreateProbeResult()
@@ -97,4 +123,3 @@ public sealed class ResultRendererTests
             [new HttpAttemptResult(1, true, 40, 200, "OK", new Dictionary<string, string> { ["server"] = "example" }, "hello", "abc", null)],
             new ProbeSummary(1, 0, true, "Stable", null, ExitCodeValue.Success));
 }
-

@@ -56,24 +56,33 @@ public sealed class TlsProbeService : ITlsProbeService
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
 
+        var tcpConnectMs = 0d;
+        var handshakeMs = 0d;
+        SslPolicyErrors capturedPolicyErrors = SslPolicyErrors.None;
+
         try
         {
             using var tcpClient = new TcpClient();
             var connectStopwatch = Stopwatch.StartNew();
             await tcpClient.ConnectAsync(url.DnsSafeHost, url.Port, timeoutCts.Token);
             connectStopwatch.Stop();
+            tcpConnectMs = connectStopwatch.Elapsed.TotalMilliseconds;
 
             using var networkStream = tcpClient.GetStream();
-            using var sslStream = new SslStream(networkStream, false, (_, _, _, errors) => insecure || errors == SslPolicyErrors.None);
+            using var sslStream = new SslStream(networkStream, false, (_, _, _, errors) =>
+            {
+                capturedPolicyErrors = errors;
+                return true;
+            });
 
             var handshakeStopwatch = Stopwatch.StartNew();
             await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
             {
                 TargetHost = url.DnsSafeHost,
-                CertificateRevocationCheckMode = insecure ? X509RevocationMode.NoCheck : X509RevocationMode.Online,
-                RemoteCertificateValidationCallback = (_, _, _, errors) => insecure || errors == SslPolicyErrors.None
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
             }, timeoutCts.Token);
             handshakeStopwatch.Stop();
+            handshakeMs = handshakeStopwatch.Elapsed.TotalMilliseconds;
 
             var remoteCertificate = sslStream.RemoteCertificate is null ? null : new X509Certificate2(sslStream.RemoteCertificate);
             var certificate = remoteCertificate is null
@@ -86,12 +95,23 @@ public sealed class TlsProbeService : ITlsProbeService
                     remoteCertificate.Thumbprint,
                     remoteCertificate.SerialNumber);
 
-            return new TlsProbeResult(false, true, connectStopwatch.Elapsed.TotalMilliseconds, handshakeStopwatch.Elapsed.TotalMilliseconds, sslStream.SslProtocol.ToString(), certificate, null);
+            if (!insecure && capturedPolicyErrors != SslPolicyErrors.None)
+            {
+                return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, sslStream.SslProtocol.ToString(), certificate, $"Certificate validation failed: {capturedPolicyErrors}");
+            }
+
+            return new TlsProbeResult(false, true, tcpConnectMs, handshakeMs, sslStream.SslProtocol.ToString(), certificate, null);
         }
-        catch (Exception ex) when (ex is SocketException or AuthenticationException or IOException or OperationCanceledException)
+        catch (OperationCanceledException)
         {
-            return new TlsProbeResult(false, false, 0, 0, null, null, ex.Message);
+            var message = tcpConnectMs > 0
+                ? $"TLS handshake timed out after {timeout.TotalSeconds:0.##} seconds."
+                : $"TCP connect timed out after {timeout.TotalSeconds:0.##} seconds.";
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, message);
+        }
+        catch (Exception ex) when (ex is SocketException or AuthenticationException or IOException)
+        {
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, ex.Message);
         }
     }
 }
-
