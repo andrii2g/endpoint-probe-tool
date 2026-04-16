@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EndpointProbe.Tool/EndpointProbe.Tool.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EndpointProbe.Tool.Tests/EndpointProbe.Tool.Tests.csproj" />
+  </Folder>
+</Solution>

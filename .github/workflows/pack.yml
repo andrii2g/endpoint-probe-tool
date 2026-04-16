@@ -1,0 +1,25 @@
+name: pack
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore --configfile NuGet.Config
+      - name: Pack
+        run: dotnet pack src/EndpointProbe.Tool/EndpointProbe.Tool.csproj -c Release --no-restore -o ./nupkg
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: endpoint-probe-tool
+          path: nupkg/*.nupkg
