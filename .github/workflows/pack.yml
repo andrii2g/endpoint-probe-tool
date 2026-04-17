@@ -1,5 +1,10 @@
 name: pack
 
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
 on:
   workflow_dispatch:
   push:
@@ -21,10 +26,10 @@ jobs:
       - name: Verify local tool install
         run: |
           dotnet tool install EndpointProbe.Tool --tool-path ./.tools --add-source ./nupkg
-          ./.tools/endpoint-probe --help
+          ./.tools/endpoint-probe
       - name: Upload package artifact
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v6
         with:
           name: endpoint-probe-tool
           path: nupkg/*.nupkg
-

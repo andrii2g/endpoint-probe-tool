@@ -7,7 +7,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>endpoint-probe</ToolCommandName>
     <PackageId>EndpointProbe.Tool</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>A2G</Authors>
     <Description>Production-grade endpoint diagnostics CLI for HTTP and HTTPS targets.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
