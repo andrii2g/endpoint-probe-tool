@@ -23,7 +23,8 @@ jobs:
           dotnet tool install EndpointProbe.Tool --tool-path ./.tools --add-source ./nupkg
           ./.tools/endpoint-probe --help
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: endpoint-probe-tool
           path: nupkg/*.nupkg
+
