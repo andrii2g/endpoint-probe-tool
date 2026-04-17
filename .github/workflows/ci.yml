@@ -19,3 +19,9 @@ jobs:
         run: dotnet build --no-restore
       - name: Test
         run: dotnet test --no-build --verbosity normal
+      - name: Pack local tool
+        run: dotnet pack src/EndpointProbe.Tool/EndpointProbe.Tool.csproj -c Release --no-build -o ./nupkg
+      - name: Install packed tool locally
+        run: dotnet tool install EndpointProbe.Tool --tool-path ./.tools --add-source ./nupkg
+      - name: Smoke test installed tool
+        run: ./.tools/endpoint-probe --help

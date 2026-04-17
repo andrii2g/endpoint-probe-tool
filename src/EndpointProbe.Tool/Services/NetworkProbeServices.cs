@@ -50,7 +50,7 @@ public sealed class TlsProbeService : ITlsProbeService
     {
         if (url.Scheme != Uri.UriSchemeHttps)
         {
-            return new TlsProbeResult(true, true, 0, 0, null, null, null);
+            return new TlsProbeResult(true, true, 0, 0, null, null, null, null);
         }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -97,21 +97,38 @@ public sealed class TlsProbeService : ITlsProbeService
 
             if (!insecure && capturedPolicyErrors != SslPolicyErrors.None)
             {
-                return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, sslStream.SslProtocol.ToString(), certificate, $"Certificate validation failed: {capturedPolicyErrors}");
+                return new TlsProbeResult(
+                    false,
+                    false,
+                    tcpConnectMs,
+                    handshakeMs,
+                    sslStream.SslProtocol.ToString(),
+                    certificate,
+                    $"Certificate validation failed: {capturedPolicyErrors}",
+                    "certificate_validation");
             }
 
-            return new TlsProbeResult(false, true, tcpConnectMs, handshakeMs, sslStream.SslProtocol.ToString(), certificate, null);
+            return new TlsProbeResult(false, true, tcpConnectMs, handshakeMs, sslStream.SslProtocol.ToString(), certificate, null, null);
         }
         catch (OperationCanceledException)
         {
-            var message = tcpConnectMs > 0
+            var transportError = tcpConnectMs > 0
                 ? $"TLS handshake timed out after {timeout.TotalSeconds:0.##} seconds."
                 : $"TCP connect timed out after {timeout.TotalSeconds:0.##} seconds.";
-            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, message);
+            var failureKind = tcpConnectMs > 0 ? "handshake_timeout" : "connect_timeout";
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, transportError, failureKind);
         }
-        catch (Exception ex) when (ex is SocketException or AuthenticationException or IOException)
+        catch (AuthenticationException ex)
         {
-            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, ex.Message);
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, ex.Message, "protocol_negotiation");
+        }
+        catch (SocketException ex)
+        {
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, ex.Message, "transport");
+        }
+        catch (IOException ex)
+        {
+            return new TlsProbeResult(false, false, tcpConnectMs, handshakeMs, null, null, ex.Message, "transport");
         }
     }
 }

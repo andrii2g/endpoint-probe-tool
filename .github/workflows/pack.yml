@@ -18,6 +18,10 @@ jobs:
         run: dotnet restore --configfile NuGet.Config
       - name: Pack
         run: dotnet pack src/EndpointProbe.Tool/EndpointProbe.Tool.csproj -c Release --no-restore -o ./nupkg
+      - name: Verify local tool install
+        run: |
+          dotnet tool install EndpointProbe.Tool --tool-path ./.tools --add-source ./nupkg
+          ./.tools/endpoint-probe --help
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:

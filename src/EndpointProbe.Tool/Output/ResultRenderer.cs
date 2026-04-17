@@ -51,6 +51,10 @@ public sealed class ResultRenderer
             builder.AppendLine($"TCP connect: {result.Tls.TcpConnectMs:0.##} ms");
             builder.AppendLine($"Handshake: {result.Tls.HandshakeMs:0.##} ms");
             builder.AppendLine($"Protocol: {result.Tls.Protocol ?? "<unknown>"}");
+            if (!string.IsNullOrWhiteSpace(result.Tls.FailureKind))
+            {
+                builder.AppendLine($"Failure kind: {result.Tls.FailureKind}");
+            }
             if (result.Tls.Certificate is not null)
             {
                 builder.AppendLine($"Certificate: {result.Tls.Certificate.Subject}");
@@ -70,6 +74,10 @@ public sealed class ResultRenderer
             if (attempt.StatusCode is not null)
             {
                 builder.AppendLine($"  Status: {attempt.StatusCode} {attempt.ReasonPhrase}");
+            }
+            if (attempt.IsRedirect)
+            {
+                builder.AppendLine($"  Redirect: {attempt.RedirectLocation}");
             }
             if (attempt.Headers.Count > 0)
             {
@@ -114,4 +122,3 @@ public sealed class ResultRenderer
         builder.AppendLine(new string('-', title.Length));
     }
 }
-

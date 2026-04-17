@@ -78,21 +78,39 @@ public sealed class EndpointProbeService(
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             var bodyPreview = await ReadPreviewAsync(response, cancellationToken);
             stopwatch.Stop();
+
+            var headers = ExtractHeaders(response);
+            var redirectLocation = headers.TryGetValue("location", out var location) ? location : null;
+            var isRedirect = (int)response.StatusCode is >= 300 and < 400 && !string.IsNullOrWhiteSpace(redirectLocation);
+
             return new HttpAttemptResult(
                 attemptNumber,
                 true,
                 stopwatch.Elapsed.TotalMilliseconds,
                 (int)response.StatusCode,
                 response.ReasonPhrase,
-                ExtractHeaders(response),
+                headers,
                 bodyPreview,
                 bodyPreview is null ? null : ComputeHash(bodyPreview),
-                null);
+                null,
+                isRedirect,
+                redirectLocation);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
         {
             stopwatch.Stop();
-            return new HttpAttemptResult(attemptNumber, false, stopwatch.Elapsed.TotalMilliseconds, null, null, new Dictionary<string, string>(), null, null, ex.Message);
+            return new HttpAttemptResult(
+                attemptNumber,
+                false,
+                stopwatch.Elapsed.TotalMilliseconds,
+                null,
+                null,
+                new Dictionary<string, string>(),
+                null,
+                null,
+                ex.Message,
+                false,
+                null);
         }
     }
 
@@ -188,6 +206,8 @@ public static class VerdictEngine
         return attempts.All(attempt =>
             attempt.StatusCode == first.StatusCode &&
             string.Equals(attempt.BodyHash, first.BodyHash, StringComparison.OrdinalIgnoreCase) &&
+            attempt.IsRedirect == first.IsRedirect &&
+            string.Equals(attempt.RedirectLocation, first.RedirectLocation, StringComparison.Ordinal) &&
             HeadersMatch(attempt.Headers, first.Headers));
     }
 
@@ -209,4 +229,3 @@ public static class VerdictEngine
         return true;
     }
 }
-

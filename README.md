@@ -1,6 +1,6 @@
 # EndpointProbe.Tool
 
-`EndpointProbe.Tool` is a .NET CLI tool for diagnosing HTTP and HTTPS endpoints, including DNS, TLS, timeout, retry, and response consistency issues.
+`EndpointProbe.Tool` is a .NET CLI tool for diagnosing HTTP and HTTPS endpoints, including DNS, TLS, timeout, retry, redirect, and response consistency issues.
 
 ## Run from source
 
@@ -10,7 +10,10 @@ dotnet run --project src/EndpointProbe.Tool -- https://example.com
 
 ## Install locally
 
+Local install is supported from the packed `.nupkg` output. Publishing to a public package feed is out of scope for v1.
+
 ```bash
+dotnet pack -c Release -o ./nupkg
 dotnet tool install -g EndpointProbe.Tool --add-source ./nupkg
 ```
 
@@ -19,6 +22,7 @@ dotnet tool install -g EndpointProbe.Tool --add-source ./nupkg
 Install the tool locally from the generated package:
 
 ```bash
+dotnet pack -c Release -o ./nupkg
 dotnet tool install -g EndpointProbe.Tool --add-source ./nupkg
 ```
 
@@ -32,6 +36,12 @@ Run multiple attempts to detect unstable responses:
 
 ```bash
 endpoint-probe https://example.com --attempts 3
+```
+
+Inspect a redirect without auto-following it:
+
+```bash
+endpoint-probe https://example.com/login
 ```
 
 Emit machine-readable JSON output:

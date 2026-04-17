@@ -31,7 +31,8 @@ public sealed record TlsProbeResult(
     double HandshakeMs,
     string? Protocol,
     CertificateInfo? Certificate,
-    string? Error);
+    string? Error,
+    string? FailureKind);
 
 public sealed record CertificateInfo(
     string? Subject,
@@ -50,7 +51,9 @@ public sealed record HttpAttemptResult(
     IReadOnlyDictionary<string, string> Headers,
     string? BodyPreview,
     string? BodyHash,
-    string? Error);
+    string? Error,
+    bool IsRedirect,
+    string? RedirectLocation);
 
 public enum ExitCodeValue
 {
@@ -72,4 +75,3 @@ public sealed record ProbeSummary(
     string Verdict,
     string? Notes,
     ExitCodeValue ExitCode);
-

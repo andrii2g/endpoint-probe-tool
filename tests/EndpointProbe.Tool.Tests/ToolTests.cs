@@ -36,6 +36,15 @@ public sealed class CliParserTests
     }
 
     [Fact]
+    public void Defaults_Body_Request_To_Post_When_Method_Not_Supplied()
+    {
+        var result = CliParser.Parse(["https://example.com", "--body", "payload"]);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("POST", result.Options!.Method.Method);
+    }
+
+    [Fact]
     public void Rejects_InvalidHeader()
     {
         var result = CliParser.Parse(["https://example.com", "--headers", "broken"]);
@@ -61,10 +70,10 @@ public sealed class VerdictEngineTests
     {
         var summary = VerdictEngine.CreateSummary(
             new DnsProbeResult(true, 1, ["127.0.0.1"], null),
-            new TlsProbeResult(false, true, 1, 1, "Tls13", null, null),
+            new TlsProbeResult(false, true, 1, 1, "Tls13", null, null, null),
             [
-                new HttpAttemptResult(1, true, 10, 200, "OK", new Dictionary<string, string> { ["server"] = "a" }, "alpha", "hash-a", null),
-                new HttpAttemptResult(2, true, 10, 200, "OK", new Dictionary<string, string> { ["server"] = "b" }, "beta", "hash-b", null)
+                new HttpAttemptResult(1, true, 10, 200, "OK", new Dictionary<string, string> { ["server"] = "a" }, "alpha", "hash-a", null, false, null),
+                new HttpAttemptResult(2, true, 10, 200, "OK", new Dictionary<string, string> { ["server"] = "b" }, "beta", "hash-b", null, false, null)
             ]);
 
         Assert.Equal(ExitCodeValue.Unstable, summary.ExitCode);
@@ -75,7 +84,7 @@ public sealed class VerdictEngineTests
 public sealed class ResultRendererTests
 {
     [Fact]
-    public void Renders_Json_WithCamelCase()
+    public void Renders_Json_WithCamelCase_AndStableSections()
     {
         var renderer = new ResultRenderer();
         var result = CreateProbeResult();
@@ -85,6 +94,20 @@ public sealed class ResultRendererTests
         Assert.Contains("\"endpoint\"", json);
         Assert.Contains("\"successfulAttempts\"", json);
         Assert.Contains("\"exitCode\": \"Success\"", json);
+        Assert.Contains("\"tls\"", json);
+        Assert.Contains("\"failureKind\": \"certificate_validation\"", json);
+        Assert.Contains("\"isRedirect\": true", json);
+    }
+
+    [Fact]
+    public void Renders_Console_Redirect_And_Tls_Failure_Metadata()
+    {
+        var renderer = new ResultRenderer();
+        var output = renderer.Render(CreateProbeResult(), asJson: false);
+
+        Assert.Contains("Failure kind: certificate_validation", output);
+        Assert.Contains("Redirect: https://origin.example.com/login", output);
+        Assert.Contains("Body hash: abc", output);
     }
 
     [Fact]
@@ -119,7 +142,7 @@ public sealed class ResultRendererTests
         => new(
             new EndpointInfo("https://example.com", "example.com", "https", 443, "GET", 1, false, 15, new Dictionary<string, string>()),
             new DnsProbeResult(true, 4.2, ["93.184.216.34"], null),
-            new TlsProbeResult(false, true, 10, 20, "Tls13", new CertificateInfo("CN=example.com", "CN=issuer", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30), "thumb", "serial"), null),
-            [new HttpAttemptResult(1, true, 40, 200, "OK", new Dictionary<string, string> { ["server"] = "example" }, "hello", "abc", null)],
+            new TlsProbeResult(false, false, 10, 20, "Tls13", new CertificateInfo("CN=example.com", "CN=issuer", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30), "thumb", "serial"), "Certificate validation failed: RemoteCertificateNameMismatch", "certificate_validation"),
+            [new HttpAttemptResult(1, true, 40, 302, "Found", new Dictionary<string, string> { ["server"] = "example", ["location"] = "https://origin.example.com/login" }, "hello", "abc", null, true, "https://origin.example.com/login")],
             new ProbeSummary(1, 0, true, "Stable", null, ExitCodeValue.Success));
 }
