@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- add multi-endpoint `check` mode with config, fail-fast, full-run, and aggregate exit behavior
+
 ## 1.1.0
 
 - upgrade to `System.CommandLine`

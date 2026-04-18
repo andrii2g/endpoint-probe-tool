@@ -1,4 +1,5 @@
 using A2G.EndpointProbe.Tool.Cli;
+using A2G.EndpointProbe.Tool.Models;
 using A2G.EndpointProbe.Tool.Output;
 using Microsoft.Extensions.Logging;
 
@@ -6,6 +7,7 @@ namespace A2G.EndpointProbe.Tool.Services;
 
 public sealed class EndpointProbeApplication(
     IEndpointProbeService endpointProbeService,
+    CheckExecutor checkExecutor,
     ResultRenderer resultRenderer,
     ILogger<EndpointProbeApplication> logger)
 {
@@ -18,7 +20,7 @@ public sealed class EndpointProbeApplication(
             return (int)ExitCode.Success;
         }
 
-        if (!parseResult.IsSuccess || parseResult.Options is null)
+        if (!parseResult.IsSuccess || parseResult.Mode is null)
         {
             Console.Error.WriteLine(parseResult.Error ?? "Invalid usage.");
             Console.Error.WriteLine();
@@ -28,24 +30,17 @@ public sealed class EndpointProbeApplication(
 
         try
         {
-            var result = await endpointProbeService.ProbeAsync(parseResult.Options, cancellationToken);
-            var rendered = resultRenderer.Render(result, parseResult.Options.Json);
-            Console.WriteLine(rendered);
-
-            if (!string.IsNullOrWhiteSpace(parseResult.Options.Output))
+            return parseResult.Mode switch
             {
-                await File.WriteAllTextAsync(parseResult.Options.Output!, rendered + Environment.NewLine, cancellationToken);
-            }
-
-            return result.Summary.ExitCode switch
-            {
-                Models.ExitCodeValue.Success => (int)ExitCode.Success,
-                Models.ExitCodeValue.DnsFailure => (int)ExitCode.DnsFailure,
-                Models.ExitCodeValue.TlsFailure => (int)ExitCode.TlsFailure,
-                Models.ExitCodeValue.HttpFailure => (int)ExitCode.HttpFailure,
-                Models.ExitCodeValue.Unstable => (int)ExitCode.Unstable,
-                _ => (int)ExitCode.InternalError
+                ExecutionMode.Probe when parseResult.ProbeOptions is not null => await RunProbeAsync(parseResult.ProbeOptions, cancellationToken),
+                ExecutionMode.Check when parseResult.CheckOptions is not null => await RunCheckAsync(parseResult.CheckOptions, cancellationToken),
+                _ => (int)ExitCode.InvalidUsage
             };
+        }
+        catch (CheckConfigurationException ex)
+        {
+            Console.Error.WriteLine($"Invalid config: {ex.Message}");
+            return (int)ExitCode.InvalidUsage;
         }
         catch (OperationCanceledException)
         {
@@ -64,5 +59,45 @@ public sealed class EndpointProbeApplication(
             return (int)ExitCode.InternalError;
         }
     }
-}
 
+    private async Task<int> RunProbeAsync(CliOptions options, CancellationToken cancellationToken)
+    {
+        var result = await endpointProbeService.ProbeAsync(options, cancellationToken);
+        var rendered = resultRenderer.Render(result, options.Json);
+        Console.WriteLine(rendered);
+
+        if (!string.IsNullOrWhiteSpace(options.Output))
+        {
+            await File.WriteAllTextAsync(options.Output!, rendered + Environment.NewLine, cancellationToken);
+        }
+
+        return result.Summary.ExitCode switch
+        {
+            ExitCodeValue.Success => (int)ExitCode.Success,
+            ExitCodeValue.DnsFailure => (int)ExitCode.DnsFailure,
+            ExitCodeValue.TlsFailure => (int)ExitCode.TlsFailure,
+            ExitCodeValue.HttpFailure => (int)ExitCode.HttpFailure,
+            ExitCodeValue.Unstable => (int)ExitCode.Unstable,
+            _ => (int)ExitCode.InternalError
+        };
+    }
+
+    private async Task<int> RunCheckAsync(CheckCliOptions options, CancellationToken cancellationToken)
+    {
+        var report = await checkExecutor.ExecuteAsync(options, cancellationToken);
+        var rendered = resultRenderer.Render(report, options.Json);
+        Console.WriteLine(rendered);
+
+        if (!string.IsNullOrWhiteSpace(options.Output))
+        {
+            await File.WriteAllTextAsync(options.Output!, rendered + Environment.NewLine, cancellationToken);
+        }
+
+        return report.Summary.ExitCode switch
+        {
+            ExitCodeValue.Success => (int)ExitCode.Success,
+            ExitCodeValue.Unstable => (int)ExitCode.Unstable,
+            _ => (int)ExitCode.InternalError
+        };
+    }
+}

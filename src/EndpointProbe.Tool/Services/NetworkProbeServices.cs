@@ -1,11 +1,10 @@
+using A2G.EndpointProbe.Tool.Models;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using A2G.EndpointProbe.Tool.Cli;
-using A2G.EndpointProbe.Tool.Models;
 
 namespace A2G.EndpointProbe.Tool.Services;
 

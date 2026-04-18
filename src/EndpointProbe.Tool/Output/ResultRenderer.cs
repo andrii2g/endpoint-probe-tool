@@ -17,6 +17,9 @@ public sealed class ResultRenderer
     public string Render(ProbeResult result, bool asJson)
         => asJson ? JsonSerializer.Serialize(result, JsonOptions) : RenderConsole(result);
 
+    public string Render(CheckRunReport report, bool asJson)
+        => asJson ? JsonSerializer.Serialize(report, JsonOptions) : RenderConsole(report);
+
     private static string RenderConsole(ProbeResult result)
     {
         var builder = new StringBuilder();
@@ -110,6 +113,55 @@ public sealed class ResultRenderer
 
         return builder.ToString().TrimEnd();
     }
+
+    private static string RenderConsole(CheckRunReport report)
+    {
+        var builder = new StringBuilder();
+        for (var index = 0; index < report.Results.Count; index++)
+        {
+            var result = report.Results[index];
+            builder.Append('[')
+                .Append(index + 1)
+                .Append('/')
+                .Append(report.ConfiguredEndpoints)
+                .Append("] ")
+                .Append(result.Name.PadRight(8))
+                .Append(' ')
+                .Append(result.Passed ? "PASS" : "FAIL")
+                .Append(' ')
+                .Append(result.ActualStatusCode?.ToString() ?? "<none>")
+                .Append(' ')
+                .Append(FormatDuration(result.DurationMs));
+
+            if (!string.IsNullOrWhiteSpace(result.FailureReason))
+            {
+                builder.Append("  ").Append(result.FailureReason);
+            }
+
+            builder.AppendLine();
+        }
+
+        if (builder.Length > 0)
+        {
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("Summary:");
+        builder.AppendLine($"- total: {report.Summary.TotalEndpoints}");
+        builder.AppendLine($"- passed: {report.Summary.PassedEndpoints}");
+        builder.AppendLine($"- failed: {report.Summary.FailedEndpoints}");
+        builder.AppendLine($"- elapsed: {FormatDuration(report.Summary.ElapsedMs)}");
+        if (report.Summary.FailedEndpointNames.Count > 0)
+        {
+            builder.AppendLine($"- failedEndpoints: {string.Join(", ", report.Summary.FailedEndpointNames)}");
+        }
+        builder.AppendLine($"- exitCode: {(int)report.Summary.ExitCode}");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatDuration(double durationMs)
+        => TimeSpan.FromMilliseconds(durationMs).ToString(@"mm\:ss\.ff");
 
     private static void AppendHeader(StringBuilder builder, string title)
     {

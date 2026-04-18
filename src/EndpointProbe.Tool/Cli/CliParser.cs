@@ -1,14 +1,19 @@
-using System.Globalization;
 using System.CommandLine;
+using System.Globalization;
+using System.Text.RegularExpressions;
+using A2G.EndpointProbe.Tool.Models;
 
 namespace A2G.EndpointProbe.Tool.Cli;
 
-public static class CliParser
+public static partial class CliParser
 {
+    private static readonly Regex HttpMethodPattern = CreateHttpMethodPattern();
+
     public static string HelpText => """
 endpoint-probe <url> [options]
+endpoint-probe check (--config <path> | <url> [<url> ...]) [options]
 
-Options:
+Probe options:
   -u, --url <value>         Endpoint URL to probe.
   -a, --attempts <value>    Number of top-level HTTP attempts. Default: 1.
   -m, --method <value>      HTTP method. Default: GET.
@@ -18,6 +23,13 @@ Options:
   --output <path>           Write the rendered output to a file.
   --timeout <value>         Total probe timeout in seconds or hh:mm:ss. Default: 15.
   --insecure                Skip TLS certificate validation.
+
+Check options:
+  --config <path>           Load endpoint checks from a JSON array config file.
+  --fail-fast               Stop after the first failing endpoint.
+  --full-run                Continue through all configured endpoints (default).
+
+General:
   -h, --help                Show help.
 """;
 
@@ -28,7 +40,14 @@ Options:
             return CliParseResult.Help();
         }
 
-        var definition = CreateDefinition();
+        return string.Equals(args[0], "check", StringComparison.OrdinalIgnoreCase)
+            ? ParseCheck(args[1..])
+            : ParseProbe(args);
+    }
+
+    private static CliParseResult ParseProbe(string[] args)
+    {
+        var definition = CreateProbeDefinition();
         var parseResult = definition.RootCommand.Parse(args);
         if (parseResult.Errors.Count > 0)
         {
@@ -60,6 +79,11 @@ Options:
         }
 
         var methodName = parseResult.GetValue(definition.MethodOption) ?? "GET";
+        if (!IsValidHttpMethod(methodName))
+        {
+            return CliParseResult.Failure($"Invalid HTTP method: {methodName}");
+        }
+
         var method = new HttpMethod(methodName.ToUpperInvariant());
 
         var timeoutText = parseResult.GetValue(definition.TimeoutOption);
@@ -80,7 +104,7 @@ Options:
             method = HttpMethod.Post;
         }
 
-        return CliParseResult.Success(new CliOptions(
+        return CliParseResult.ProbeSuccess(new CliOptions(
             url!,
             attempts,
             method,
@@ -93,7 +117,82 @@ Options:
             Help: false));
     }
 
-    private static CommandDefinition CreateDefinition()
+    private static CliParseResult ParseCheck(string[] args)
+    {
+        var definition = CreateCheckDefinition();
+        var parseResult = definition.Command.Parse(args);
+        if (parseResult.Errors.Count > 0)
+        {
+            return CliParseResult.Failure(parseResult.Errors[0].Message);
+        }
+
+        var attempts = parseResult.GetValue(definition.AttemptsOption) ?? 1;
+        if (attempts <= 0)
+        {
+            return CliParseResult.Failure("--attempts must be a positive integer.");
+        }
+
+        var timeoutText = parseResult.GetValue(definition.TimeoutOption);
+        var timeout = TimeSpan.FromSeconds(15);
+        if (timeoutText is not null && !TryParseTimeout(timeoutText, out timeout))
+        {
+            return CliParseResult.Failure("--timeout must be a positive number of seconds or a time span.");
+        }
+
+        var failFast = parseResult.GetValue(definition.FailFastOption);
+        var fullRun = parseResult.GetValue(definition.FullRunOption);
+        if (failFast && fullRun)
+        {
+            return CliParseResult.Failure("Specify either --fail-fast or --full-run, not both.");
+        }
+
+        var method = parseResult.GetValue(definition.MethodOption);
+        var body = parseResult.GetValue(definition.BodyOption);
+        var headers = parseResult.GetValue(definition.HeadersOption) ?? [];
+        if (!string.IsNullOrWhiteSpace(method) || !string.IsNullOrWhiteSpace(body) || headers.Length > 0)
+        {
+            return CliParseResult.Failure("--method, --headers, and --body are not supported in check mode. Use a config file to define per-endpoint request details.");
+        }
+
+        var configPath = parseResult.GetValue(definition.ConfigOption);
+        var rawUrls = parseResult.GetValue(definition.UrlsArgument) ?? [];
+        if (!string.IsNullOrWhiteSpace(configPath) && rawUrls.Length > 0)
+        {
+            return CliParseResult.Failure("Specify endpoints with either --config or direct URLs, not both.");
+        }
+
+        if (string.IsNullOrWhiteSpace(configPath) && rawUrls.Length == 0)
+        {
+            return CliParseResult.Failure("check mode requires either --config <path> or one or more URLs.");
+        }
+
+        var endpoints = new List<EndpointCheckDefinition>(rawUrls.Length);
+        foreach (var rawUrl in rawUrls)
+        {
+            if (!TryParseUrl(rawUrl, out var url))
+            {
+                return CliParseResult.Failure($"Invalid URL: {rawUrl}");
+            }
+
+            endpoints.Add(new EndpointCheckDefinition(
+                EndpointCheckDefinition.CreateDefaultName(url!),
+                url!,
+                "GET",
+                200));
+        }
+
+        return CliParseResult.CheckSuccess(new CheckCliOptions(
+            configPath,
+            endpoints,
+            attempts,
+            parseResult.GetValue(definition.JsonOption),
+            parseResult.GetValue(definition.OutputOption),
+            timeout,
+            parseResult.GetValue(definition.InsecureOption),
+            FailFast: failFast));
+    }
+
+    private static ProbeCommandDefinition CreateProbeDefinition()
     {
         var urlArgument = new Argument<string?>("url")
         {
@@ -101,27 +200,14 @@ Options:
             Description = "Endpoint URL to probe."
         };
 
-        var urlOption = new Option<string?>("--url", ["-u"])
-        {
-            Description = "Endpoint URL to probe."
-        };
-
-        var attemptsOption = new Option<int?>("--attempts", ["-a"])
-        {
-            Description = "Number of top-level HTTP attempts."
-        };
-
-        var methodOption = new Option<string?>("--method", ["-m"])
-        {
-            Description = "HTTP method."
-        };
-
+        var urlOption = new Option<string?>("--url", ["-u"]) { Description = "Endpoint URL to probe." };
+        var attemptsOption = new Option<int?>("--attempts", ["-a"]) { Description = "Number of top-level HTTP attempts." };
+        var methodOption = new Option<string?>("--method", ["-m"]) { Description = "HTTP method." };
         var headersOption = new Option<string[]>("--headers")
         {
             Description = "Header in 'Name: Value' form. Repeat or use ';' separators.",
             AllowMultipleArgumentsPerToken = true
         };
-
         var bodyOption = new Option<string?>("--body") { Description = "Request body for methods such as POST." };
         var jsonOption = new Option<bool>("--json") { Description = "Emit JSON to stdout." };
         var outputOption = new Option<string?>("--output") { Description = "Write the rendered output to a file." };
@@ -140,7 +226,48 @@ Options:
         rootCommand.Add(timeoutOption);
         rootCommand.Add(insecureOption);
 
-        return new CommandDefinition(rootCommand, urlArgument, urlOption, attemptsOption, methodOption, headersOption, bodyOption, jsonOption, outputOption, timeoutOption, insecureOption);
+        return new ProbeCommandDefinition(rootCommand, urlArgument, urlOption, attemptsOption, methodOption, headersOption, bodyOption, jsonOption, outputOption, timeoutOption, insecureOption);
+    }
+
+    private static CheckCommandDefinition CreateCheckDefinition()
+    {
+        var urlsArgument = new Argument<string[]>("urls")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "One or more endpoint URLs to check."
+        };
+
+        var configOption = new Option<string?>("--config") { Description = "Load endpoint checks from a JSON array config file." };
+        var failFastOption = new Option<bool>("--fail-fast") { Description = "Stop after the first failing endpoint." };
+        var fullRunOption = new Option<bool>("--full-run") { Description = "Continue through all configured endpoints." };
+        var attemptsOption = new Option<int?>("--attempts", ["-a"]) { Description = "Number of top-level HTTP attempts per endpoint." };
+        var methodOption = new Option<string?>("--method", ["-m"]) { Description = "Not supported in check mode." };
+        var headersOption = new Option<string[]>("--headers")
+        {
+            Description = "Not supported in check mode.",
+            AllowMultipleArgumentsPerToken = true
+        };
+        var bodyOption = new Option<string?>("--body") { Description = "Not supported in check mode." };
+        var jsonOption = new Option<bool>("--json") { Description = "Emit JSON to stdout." };
+        var outputOption = new Option<string?>("--output") { Description = "Write the rendered output to a file." };
+        var timeoutOption = new Option<string?>("--timeout") { Description = "Total probe timeout in seconds or hh:mm:ss." };
+        var insecureOption = new Option<bool>("--insecure") { Description = "Skip TLS certificate validation." };
+
+        var command = new Command("check", "Check multiple endpoints in one run.");
+        command.Add(urlsArgument);
+        command.Add(configOption);
+        command.Add(failFastOption);
+        command.Add(fullRunOption);
+        command.Add(attemptsOption);
+        command.Add(methodOption);
+        command.Add(headersOption);
+        command.Add(bodyOption);
+        command.Add(jsonOption);
+        command.Add(outputOption);
+        command.Add(timeoutOption);
+        command.Add(insecureOption);
+
+        return new CheckCommandDefinition(command, urlsArgument, configOption, failFastOption, fullRunOption, attemptsOption, methodOption, headersOption, bodyOption, jsonOption, outputOption, timeoutOption, insecureOption);
     }
 
     private static bool IsHelpToken(string arg)
@@ -201,10 +328,31 @@ Options:
         return false;
     }
 
-    private sealed record CommandDefinition(
+    private static bool IsValidHttpMethod(string value)
+        => !string.IsNullOrWhiteSpace(value) && HttpMethodPattern.IsMatch(value);
+
+    [GeneratedRegex("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")]
+    private static partial Regex CreateHttpMethodPattern();
+
+    private sealed record ProbeCommandDefinition(
         RootCommand RootCommand,
         Argument<string?> UrlArgument,
         Option<string?> UrlOption,
+        Option<int?> AttemptsOption,
+        Option<string?> MethodOption,
+        Option<string[]> HeadersOption,
+        Option<string?> BodyOption,
+        Option<bool> JsonOption,
+        Option<string?> OutputOption,
+        Option<string?> TimeoutOption,
+        Option<bool> InsecureOption);
+
+    private sealed record CheckCommandDefinition(
+        Command Command,
+        Argument<string[]> UrlsArgument,
+        Option<string?> ConfigOption,
+        Option<bool> FailFastOption,
+        Option<bool> FullRunOption,
         Option<int?> AttemptsOption,
         Option<string?> MethodOption,
         Option<string[]> HeadersOption,
